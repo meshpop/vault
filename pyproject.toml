@@ -45,7 +45,7 @@ dev = [
 sv = "cli:main"
 
 [project.urls]
-Homepage = "https://github.com/meshpop/sv-vault"
+Homepage = "https://github.com/meshpop/vault"
 
 [tool.setuptools]
 py-modules = [
