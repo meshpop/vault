@@ -119,7 +119,7 @@ class TestFullFlow:
         master_hmac = km.generate_hmac_key()
 
         # 2. 노드별 키 파생
-        nodes = ["v1", "g1", "g2", "s1", "s2", "d1"]
+        nodes = ["node1", "node2", "node3", "node4", "node5", "node6"]
         node_keys = {}
         for node in nodes:
             node_keys[node] = km.derive_node_key(master_hmac, node)

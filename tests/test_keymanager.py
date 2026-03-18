@@ -170,8 +170,8 @@ class TestHMACKeys:
         """같은 마스터 + 노드 → 같은 키"""
         master = KeyManager.generate_hmac_key()
 
-        key1 = KeyManager.derive_node_key(master, "g1")
-        key2 = KeyManager.derive_node_key(master, "g1")
+        key1 = KeyManager.derive_node_key(master, "node1")
+        key2 = KeyManager.derive_node_key(master, "node1")
 
         assert key1 == key2
 
@@ -179,16 +179,16 @@ class TestHMACKeys:
         """다른 노드 → 다른 키"""
         master = KeyManager.generate_hmac_key()
 
-        key_g1 = KeyManager.derive_node_key(master, "g1")
+        key_node1 = KeyManager.derive_node_key(master, "node1")
         key_g2 = KeyManager.derive_node_key(master, "g2")
 
-        assert key_g1 != key_g2
+        assert key_node1 != key_g2
 
     def test_derive_node_key_all_nodes(self):
         """실제 클러스터 노드들 — 전부 다른 키"""
         master = KeyManager.generate_hmac_key()
-        nodes = ["v1", "v2", "v3", "v4", "g1", "g2", "g3", "g4",
-                 "d1", "d2", "s1", "s2", "m1", "n1"]
+        nodes = ["node1", "node2", "node3", "node4", "node5", "node6", "node7", "node8",
+                 "node9", "node10", "node11", "node12", "node13", "node14"]
 
         keys = [KeyManager.derive_node_key(master, n) for n in nodes]
 

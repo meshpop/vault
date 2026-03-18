@@ -70,7 +70,7 @@ class VsshTransport:
         """원격 명령 실행
 
         Args:
-            node: 노드 이름 (예: "s1", "g1", "v1")
+            node: 노드 이름 (예: "node1", "node2", "node3")
             cmd: 실행할 명령
             timeout: 타임아웃 (초)
 
