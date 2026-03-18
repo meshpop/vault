@@ -442,7 +442,11 @@ def cmd_decrypt(args):
         engine.decrypt_file(src, dst, password, original_filename=args.get("--original-name"))
         print(f"✅ 복호화 완료: {dst}")
     except Exception as e:
-        print(f"❌ 복호화 실패: {e}")
+        # cryptography.exceptions.InvalidTag has no message — give a clear hint
+        msg = str(e).strip()
+        if not msg or type(e).__name__ == "InvalidTag":
+            msg = "패스워드가 틀리거나 파일이 손상되었습니다 (AES-GCM 인증 실패)"
+        print(f"❌ 복호화 실패: {msg}")
         sys.exit(1)
 
 

@@ -208,7 +208,13 @@ class VaultEngine:
         """
         key = self.derive_key(password, blob.salt)
         aesgcm = AESGCM(key)
-        return aesgcm.decrypt(blob.nonce, blob.ciphertext, aad)
+        try:
+            return aesgcm.decrypt(blob.nonce, blob.ciphertext, aad)
+        except Exception as tag_err:
+            # InvalidTag has empty str() — raise with explicit message
+            if not str(tag_err).strip():
+                raise ValueError("패스워드가 틀리거나 파일이 손상됨 (인증 태그 불일치)") from tag_err
+            raise
 
     # ─── 키 직접 사용 (Shamir 복구 후) ───────────────────────
 
