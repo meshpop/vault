@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sv-vault"
 version = "2.0.0"
-description = "분산 시크릿 관리 — AES-256-GCM + Argon2id + Shamir's Secret Sharing"
+description = "Distributed secret manager — AES-256-GCM + Argon2id + Shamir's Secret Sharing"
 readme = "SPEC.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
