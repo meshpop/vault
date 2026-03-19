@@ -50,3 +50,7 @@ Thumbs.db
 secrets.enc
 *.vault
 vault.yml
+# Internal infra docs — never commit
+ARCHITECTURE.md
+docs/ARCHITECTURE.md
+docs/API_ARCHITECTURE.md
