@@ -47,6 +47,9 @@ sv = "cli:main"
 [project.urls]
 Homepage = "https://github.com/meshpop/vault"
 
+[project.entry-points."meshpop.mcp"]
+vault = "vault_mcp_server"
+
 [tool.setuptools]
 py-modules = [
     "engine",
