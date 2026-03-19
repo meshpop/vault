@@ -1,7 +1,7 @@
 """
 SecureVault Backup Module (sv-backup)
 
-secrets.enc → Vault double-encrypt → vssh atomic upload → fixed targets (s1, s2)
+secrets.enc → Vault double-encrypt → vssh atomic upload → targets configured in vault.yml
 No AI judgment. Score-independent. Backup only to targets specified by humans in config file.
 """
 
@@ -36,7 +36,7 @@ class SecureBackup:
     """SecureVault backup manager
 
     Principles:
-    - Backup targets fixed by humans in vault.yml (default: s1, s2)
+    - Backup targets configured in vault.yml (no hardcoded defaults)
     - No AI score-based auto-selection
     - Double encryption: secrets.enc → AES-256-GCM + Argon2id → .vault
     - Transfer: vssh atomic upload (tmp → rename)
@@ -220,7 +220,7 @@ class SecureBackup:
         """Download backup from remote node and restore
 
         Args:
-            node: source node (e.g. "s1")
+            node: source node (e.g. "storage1")
             password: decryption password
             output_path: restored file path
             vault_filename: specific backup filename (omit for latest)

@@ -68,7 +68,7 @@ class VaultMeta:
     created_at: str = ""
     last_modified: str = ""
     entry_count: int = 0
-    backup_targets: list = field(default_factory=lambda: ["s1", "s2"])
+    backup_targets: list = field(default_factory=list)  # Configure in vault.yml: backup_targets: [node1, node2]
 
 
 # ─── Vault core ──────────────────────────────────────────

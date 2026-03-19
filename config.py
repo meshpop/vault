@@ -24,8 +24,8 @@ DEFAULT_BACKUP_DIR = "backups"
 @dataclass
 class BackupConfig:
     """Backup config — set by humans"""
-    targets: list = field(default_factory=lambda: ["s1", "s2"])
-    remote_dir: str = "~/backup/v1/sv-vault"
+    targets: list = field(default_factory=list)  # Configure in vault.yml: targets: [node1, node2]
+    remote_dir: str = "~/backup/vault"
     schedule: str = "0 3 * * *"  # daily 03:00
     verify_schedule: str = "30 3 * * 0"  # weekly Sunday 03:30
     max_versions: int = 30
@@ -54,15 +54,15 @@ class ShamirConfig:
     # shard locations are entered manually by humans
     master_locations: list = field(default_factory=lambda: [
         "MacBook Secure Enclave",
-        "s1 NAS encrypted partition",
-        "s2 NAS encrypted partition",
+        "primary storage node",
+        "secondary storage node",
         "Offline USB (safe)",
         "Paper printout (safe)",
     ])
     vault_locations: list = field(default_factory=lambda: [
         "MacBook Keychain",
-        "s1 NAS",
-        "s2 NAS",
+        "primary storage",
+        "secondary storage",
     ])
 
 

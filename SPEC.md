@@ -105,7 +105,7 @@ Each share is an `(index: int, data: bytes)` pair. data length = original secret
   "share_map": [
     {
       "share_index": 1,
-      "node": "d2",
+      "node": "worker2",
       "remote_path": "/opt/sv-vault/shares/share_26f0d008921c_1.bin",
       "stored_at": "2026-03-14T08:00:00+00:00",
       "verified": true,
@@ -113,7 +113,7 @@ Each share is an `(index: int, data: bytes)` pair. data length = original secret
     }
   ],
   "entry_count": 7,
-  "backup_targets": ["s1", "s2"],
+  "backup_targets": ["storage1", "storage2"],
   "created_at": "2026-03-14T08:00:00+00:00",
   "last_modified": "2026-03-14T08:00:00+00:00"
 }
