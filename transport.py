@@ -1,12 +1,12 @@
 """
 SecureVault Transport Layer — VsshTransport
 
-vssh 바이너리를 감싸는 래퍼. SecureVault의 모든 원격 작업은 이 인터페이스를 통함.
-SSH/SCP/paramiko 완전 제거. Transport fallback 없음.
-vssh가 안 되면 안 되는 것.
+Wrapper around the vssh binary. All SecureVault remote operations go through this interface.
+SSH/SCP/paramiko completely removed. No transport fallback.
+If vssh doesn't work, nothing works.
 
-transport-agnostic: 하부가 Wire든 Tailscale이든 LAN이든
-vssh는 IP만 닿으면 동작.
+transport-agnostic: underlying network may be Wire, Tailscale, or LAN —
+vssh works as long as IP is reachable.
 """
 
 import subprocess
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 @dataclass
 class ExecResult:
-    """원격 명령 실행 결과"""
+    """Remote command execution result"""
     node: str
     stdout: str
     stderr: str
@@ -28,29 +28,29 @@ class ExecResult:
 
 
 class VsshTransport:
-    """SecureVault 전용 vssh 래퍼
+    """SecureVault-specific vssh wrapper
 
-    모든 원격 작업 (exec, put, get, broadcast)은 이 클래스를 통해서만 수행.
-    SSH fallback 없음. vssh binary가 없으면 초기화 시 에러.
+    All remote operations (exec, put, get, broadcast) go through this class only.
+    No SSH fallback. Raises error on init if vssh binary is missing.
     """
 
     def __init__(self, vssh_path: Optional[str] = None, timeout: int = 30):
         """
         Args:
-            vssh_path: vssh 바이너리 경로 (None이면 자동 탐색)
-            timeout: 기본 타임아웃 (초)
+            vssh_path: vssh binary path (None = auto-detect)
+            timeout: default timeout (seconds)
         """
         self.vssh = vssh_path or shutil.which("vssh") or "/usr/local/bin/vssh"
         self.timeout = timeout
 
         if not os.path.isfile(self.vssh):
             raise FileNotFoundError(
-                f"vssh 바이너리를 찾을 수 없음: {self.vssh}\n"
-                "SecureVault는 vssh 없이 동작하지 않습니다."
+                f"vssh binary not found: {self.vssh}\n"
+                "SecureVault cannot operate without vssh."
             )
 
     def _run(self, args: list, timeout: Optional[int] = None) -> subprocess.CompletedProcess:
-        """vssh 프로세스 실행"""
+        """Run vssh process"""
         cmd = [self.vssh] + args
         return subprocess.run(
             cmd,
@@ -67,12 +67,12 @@ class VsshTransport:
     # ─── exec ────────────────────────────────────────────────
 
     def exec(self, node: str, cmd: str, timeout: Optional[int] = None) -> ExecResult:
-        """원격 명령 실행
+        """Execute remote command
 
         Args:
-            node: 노드 이름 (예: "node1", "node2", "node3")
-            cmd: 실행할 명령
-            timeout: 타임아웃 (초)
+            node: node name (e.g. "node1", "node2", "node3")
+            cmd: command to run
+            timeout: timeout (seconds)
 
         Returns:
             ExecResult
@@ -103,7 +103,7 @@ class VsshTransport:
                 success=False,
             )
 
-    # ─── put (파일 업로드) ───────────────────────────────────
+    # ─── put (file upload) ───────────────────────────────────
 
     def put(
         self,
@@ -113,20 +113,20 @@ class VsshTransport:
         timeout: Optional[int] = None,
         verify: bool = True,
     ) -> bool:
-        """파일을 원격 노드에 업로드
+        """Upload file to remote node
 
         Args:
-            local_path: 로컬 파일 경로
-            node: 대상 노드
-            remote_path: 원격 저장 경로
-            timeout: 타임아웃 (초)
-            verify: 업로드 후 MD5 검증
+            local_path: local file path
+            node: target node
+            remote_path: remote storage path
+            timeout: timeout (seconds)
+            verify: MD5 verify after upload
 
         Returns:
-            성공 여부
+            success bool
         """
         if not os.path.isfile(local_path):
-            raise FileNotFoundError(f"로컬 파일 없음: {local_path}")
+            raise FileNotFoundError(f"Local file not found: {local_path}")
 
         try:
             r = self._run(
@@ -142,7 +142,7 @@ class VsshTransport:
                 result = self.exec(node, f"md5sum {remote_path} | cut -d' ' -f1", timeout=30)
                 if result.success and result.stdout.strip() == local_md5:
                     return True
-                # md5sum 없으면 (Synology 등) sha256 시도
+                # fallback to sha256 if md5sum not available (e.g. Synology)
                 result = self.exec(node, f"sha256sum {remote_path} | cut -d' ' -f1", timeout=30)
                 local_sha = self._file_sha256(local_path)
                 return result.success and result.stdout.strip() == local_sha
@@ -154,7 +154,7 @@ class VsshTransport:
         except Exception:
             return False
 
-    # ─── get (파일 다운로드) ──────────────────────────────────
+    # ─── get (file download) ──────────────────────────────────
 
     def get(
         self,
@@ -163,16 +163,16 @@ class VsshTransport:
         local_path: str,
         timeout: Optional[int] = None,
     ) -> bool:
-        """원격 노드에서 파일 다운로드
+        """Download file from remote node
 
         Args:
-            node: 소스 노드
-            remote_path: 원격 파일 경로
-            local_path: 로컬 저장 경로
-            timeout: 타임아웃 (초)
+            node: source node
+            remote_path: remote file path
+            local_path: local storage path
+            timeout: timeout (seconds)
 
         Returns:
-            성공 여부
+            success bool
         """
         try:
             r = self._run(
@@ -191,20 +191,20 @@ class VsshTransport:
         nodes: Optional[list] = None,
         timeout: Optional[int] = None,
     ) -> dict[str, ExecResult]:
-        """전 노드(또는 지정 노드)에 명령 브로드캐스트
+        """Broadcast command to all (or specified) nodes
 
-        킬스위치, 긴급 잠금 등에 사용.
+        Used for kill-switch, emergency lock, etc.
 
         Args:
-            cmd: 실행할 명령
-            nodes: 대상 노드 목록 (None이면 전체)
-            timeout: 노드당 타임아웃
+            cmd: command to run
+            nodes: target node list (None = all)
+            timeout: per-node timeout
 
         Returns:
             {node_name: ExecResult}
         """
         if nodes is None:
-            # vssh status에서 노드 목록 가져오기
+            # get node list from vssh status
             r = self._run(["status"], timeout=10)
             if r.returncode == 0:
                 nodes = self._parse_status_nodes(r.stdout)
@@ -220,12 +220,12 @@ class VsshTransport:
     # ─── health ──────────────────────────────────────────────
 
     def health_ping(self, node: str, timeout: int = 5) -> bool:
-        """노드 헬스 체크 (빠른 핑)"""
+        """Node health check (fast ping)"""
         result = self.exec(node, "echo OK", timeout=timeout)
         return result.success and "OK" in result.stdout
 
     def health_check(self, node: str, timeout: int = 10) -> dict:
-        """노드 상세 헬스 체크"""
+        """Detailed node health check"""
         cmd = " && ".join([
             "echo HOSTNAME=$(hostname)",
             "echo UPTIME=$(uptime -s 2>/dev/null || uptime)",
@@ -244,7 +244,7 @@ class VsshTransport:
                 info[key.strip().lower()] = val.strip()
         return info
 
-    # ─── atomic upload (백업용) ───────────────────────────────
+    # ─── atomic upload (for backup) ───────────────────────────────
 
     def atomic_put(
         self,
@@ -253,21 +253,21 @@ class VsshTransport:
         remote_path: str,
         timeout: Optional[int] = None,
     ) -> bool:
-        """원자적 파일 업로드 (tmp → rename)
+        """Atomic file upload (tmp → rename)
 
-        백업 파일 업로드 시 사용. 중간에 실패해도 기존 파일 안 깨짐.
+        Used for backup uploads. Existing file not corrupted on partial failure.
         """
         remote_dir = os.path.dirname(remote_path)
         remote_name = os.path.basename(remote_path)
         tmp_path = f"{remote_dir}/.tmp_{remote_name}_{os.getpid()}"
 
-        # 1. tmp에 업로드
+        # 1. upload to tmp
         if not self.put(local_path, node, tmp_path, timeout=timeout, verify=True):
-            # 실패 시 tmp 정리
+            # clean up tmp on failure
             self.exec(node, f"rm -f {tmp_path}", timeout=5)
             return False
 
-        # 2. 디렉토리 확인 및 rename
+        # 2. verify directory and rename
         result = self.exec(
             node,
             f"mkdir -p {remote_dir} && mv {tmp_path} {remote_path}",
@@ -280,7 +280,7 @@ class VsshTransport:
 
         return True
 
-    # ─── 유틸리티 ────────────────────────────────────────────
+    # ─── Utilities ────────────────────────────────────────────
 
     @staticmethod
     def _file_md5(path: str) -> str:
@@ -300,7 +300,7 @@ class VsshTransport:
 
     @staticmethod
     def _parse_status_nodes(status_output: str) -> list:
-        """vssh status 출력에서 노드 이름 추출"""
+        """Extract node names from vssh status output"""
         nodes = []
         for line in status_output.splitlines():
             line = line.strip()
@@ -311,7 +311,7 @@ class VsshTransport:
         return nodes
 
     def info(self) -> dict:
-        """트랜스포트 정보"""
+        """Transport info"""
         return {
             "protocol": "vssh",
             "binary": self.vssh,
@@ -319,5 +319,5 @@ class VsshTransport:
             "transport_agnostic": True,
             "supported_networks": ["Wire", "Tailscale", "LAN", "Direct IP"],
             "ssh_fallback": False,
-            "note": "SSH/SCP/paramiko 완전 제거. vssh가 안 되면 안 되는 것.",
+            "note": "SSH/SCP/paramiko completely removed. vssh only.",
         }

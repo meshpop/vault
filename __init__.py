@@ -1,8 +1,8 @@
 """
-SecureVault — 모듈형 보안 플랫폼
+SecureVault — Modular Security Platform
 
 AES-256-GCM + Argon2id, Shamir's Secret Sharing,
-vssh transport-agnostic, 룰기반 보안.
+vssh transport-agnostic, rule-based security.
 """
 
 __version__ = "2.0.0"

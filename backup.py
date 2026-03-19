@@ -1,8 +1,8 @@
 """
 SecureVault Backup Module (sv-backup)
 
-secrets.enc → Vault 이중 암호화 → vssh atomic upload → 고정 타겟 (s1, s2)
-AI 판단 없음. 스코어 무관. 사람이 설정파일에 지정한 타겟에만 백업.
+secrets.enc → Vault double-encrypt → vssh atomic upload → fixed targets (s1, s2)
+No AI judgment. Score-independent. Backup only to targets specified by humans in config file.
 """
 
 import os
@@ -20,7 +20,7 @@ from config import ConfigManager
 
 @dataclass
 class BackupRecord:
-    """백업 기록"""
+    """Backup record"""
     timestamp: str
     source_file: str
     source_hash: str
@@ -33,14 +33,14 @@ class BackupRecord:
 
 
 class SecureBackup:
-    """SecureVault 백업 관리자
+    """SecureVault backup manager
 
-    원칙:
-    - 백업 타겟은 사람이 vault.yml에 고정 (기본: s1, s2)
-    - AI 스코어 기반 자동 선정 없음
-    - 이중 암호화: secrets.enc → AES-256-GCM + Argon2id → .vault
-    - 전송: vssh atomic upload (tmp → rename)
-    - 검증: MD5/SHA256 체크
+    Principles:
+    - Backup targets fixed by humans in vault.yml (default: s1, s2)
+    - No AI score-based auto-selection
+    - Double encryption: secrets.enc → AES-256-GCM + Argon2id → .vault
+    - Transfer: vssh atomic upload (tmp → rename)
+    - Verification: MD5/SHA256 check
     """
 
     def __init__(
@@ -55,11 +55,11 @@ class SecureBackup:
             argon2_memory_cost=self.config.config.encryption.argon2_memory_cost,
             argon2_parallelism=self.config.config.encryption.argon2_parallelism,
         )
-        self.transport = transport  # None이면 로컬 테스트 모드
+        self.transport = transport  # None = local test mode
 
         self.audit_log_path = os.path.join(self.config.config_dir, "backup_audit.log")
 
-    # ─── 백업 ────────────────────────────────────────────────
+    # ─── Backup ────────────────────────────────────────────────
 
     def backup(
         self,
@@ -67,19 +67,19 @@ class SecureBackup:
         password: str | bytes,
         targets: Optional[list] = None,
     ) -> BackupRecord:
-        """메인 백업 플로우
+        """Main backup flow
 
-        1. 소스 파일 읽기 + 해시
-        2. AES-256-GCM + Argon2id 이중 암호화
-        3. .vault 파일 생성
-        4. 각 타겟에 vssh atomic upload
-        5. 검증
-        6. 감사 로그 기록
+        1. Read source file + hash
+        2. AES-256-GCM + Argon2id double-encrypt
+        3. Create .vault file
+        4. vssh atomic upload to each target
+        5. Verify
+        6. Write audit log
 
         Args:
-            source_file: 백업할 파일 (예: secrets.enc)
-            password: 암호화 패스워드
-            targets: 백업 타겟 (None이면 설정파일에서 로드)
+            source_file: file to back up (e.g. secrets.enc)
+            password: encryption password
+            targets: backup targets (None = load from config)
 
         Returns:
             BackupRecord
@@ -87,23 +87,23 @@ class SecureBackup:
         start_time = time.time()
         targets = targets or self.config.get_backup_targets()
 
-        # 1. 소스 파일 읽기
+        # 1. read source file
         if not os.path.isfile(source_file):
-            raise FileNotFoundError(f"소스 파일 없음: {source_file}")
+            raise FileNotFoundError(f"Source file not found: {source_file}")
 
         with open(source_file, "rb") as f:
             source_data = f.read()
 
         source_hash = hashlib.sha256(source_data).hexdigest()
 
-        # 2. 이중 암호화
+        # 2. double-encrypt
         blob = self.engine.encrypt(
             data=source_data,
             password=password,
-            context=f"backup:{source_hash[:16]}",  # 원본 해시를 context에 포함
+            context=f"backup:{source_hash[:16]}",  # include original hash in context
         )
 
-        # 3. .vault 파일 저장
+        # 3. save .vault file
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         vault_filename = f"secrets_{ts}.vault"
         vault_path = os.path.join(self.config.backup_dir, vault_filename)
@@ -115,13 +115,13 @@ class SecureBackup:
 
         vault_hash = hashlib.sha256(vault_bytes).hexdigest()
 
-        # 4. 각 타겟에 업로드
+        # 4. upload to each target
         results = {}
         if self.transport:
             remote_dir = self.config.config.backup.remote_dir
             for target in targets:
                 remote_path = f"{remote_dir}/{vault_filename}"
-                # 디렉토리 생성
+                # create directory
                 self.transport.exec(target, f"mkdir -p {remote_dir}", timeout=10)
                 # atomic upload
                 success = self.transport.atomic_put(
@@ -130,7 +130,7 @@ class SecureBackup:
                 )
                 results[target] = success
 
-                # latest 심볼릭 링크 업데이트
+                # update latest symlink
                 if success:
                     latest_path = f"{remote_dir}/secrets_latest.vault"
                     self.transport.exec(
@@ -139,7 +139,7 @@ class SecureBackup:
                         timeout=5,
                     )
         else:
-            # 로컬 테스트 모드
+            # local test mode
             for target in targets:
                 local_target = os.path.join(self.config.backup_dir, f"test_{target}")
                 os.makedirs(local_target, exist_ok=True)
@@ -150,7 +150,7 @@ class SecureBackup:
 
         duration = time.time() - start_time
 
-        # 5. 기록
+        # 5. record
         record = BackupRecord(
             timestamp=datetime.now(timezone.utc).isoformat(),
             source_file=os.path.basename(source_file),
@@ -164,12 +164,12 @@ class SecureBackup:
 
         self._write_audit(record)
 
-        # 6. 오래된 백업 정리
+        # 6. clean up old backups
         self._cleanup_old_backups()
 
         return record
 
-    # ─── 복원 ────────────────────────────────────────────────
+    # ─── Restore ────────────────────────────────────────────────
 
     def restore(
         self,
@@ -178,16 +178,16 @@ class SecureBackup:
         output_path: str,
         source_hash: Optional[str] = None,
     ) -> bool:
-        """백업에서 복원
+        """Restore from backup
 
         Args:
-            vault_file: .vault 파일 경로
-            password: 복호화 패스워드
-            output_path: 복원 파일 저장 경로
-            source_hash: 원본 해시 (검증용, 없으면 AAD 없이 시도)
+            vault_file: .vault file path
+            password: decryption password
+            output_path: path to save restored file
+            source_hash: original hash (for verification, omit to try without AAD)
 
         Returns:
-            성공 여부
+            success bool
         """
         with open(vault_file, "rb") as f:
             blob = EncryptedBlob.from_bytes(f.read())
@@ -195,10 +195,10 @@ class SecureBackup:
         try:
             plaintext = self.engine.decrypt(blob, password)
         except Exception as e:
-            # AAD 불일치 또는 패스워드 틀림
-            raise ValueError(f"복호화 실패: {e}")
+            # AAD mismatch or wrong password
+            raise ValueError(f"Decryption failed: {e}")
 
-        # 복원 전 기존 파일 백업
+        # back up existing file before restore
         if os.path.exists(output_path):
             backup_path = f"{output_path}.pre_restore.{int(time.time())}"
             os.rename(output_path, backup_path)
@@ -208,7 +208,7 @@ class SecureBackup:
 
         return True
 
-    # ─── 원격 복원 ───────────────────────────────────────────
+    # ─── Remote restore ───────────────────────────────────────────
 
     def restore_from_remote(
         self,
@@ -217,16 +217,16 @@ class SecureBackup:
         output_path: str,
         vault_filename: Optional[str] = None,
     ) -> bool:
-        """원격 노드에서 백업 다운로드 후 복원
+        """Download backup from remote node and restore
 
         Args:
-            node: 소스 노드 (예: "s1")
-            password: 복호화 패스워드
-            output_path: 복원 파일 경로
-            vault_filename: 특정 백업 파일명 (없으면 latest)
+            node: source node (e.g. "s1")
+            password: decryption password
+            output_path: restored file path
+            vault_filename: specific backup filename (omit for latest)
         """
         if not self.transport:
-            raise RuntimeError("transport가 설정되지 않음")
+            raise RuntimeError("transport not configured")
 
         remote_dir = self.config.config.backup.remote_dir
         if vault_filename:
@@ -234,10 +234,10 @@ class SecureBackup:
         else:
             remote_path = f"{remote_dir}/secrets_latest.vault"
 
-        # 다운로드
+        # download
         local_tmp = os.path.join(self.config.backup_dir, ".tmp_restore.vault")
         if not self.transport.get(node, remote_path, local_tmp, timeout=120):
-            raise RuntimeError(f"{node}에서 다운로드 실패: {remote_path}")
+            raise RuntimeError(f"Download from {node} failed: {remote_path}")
 
         try:
             return self.restore(local_tmp, password, output_path)
@@ -245,12 +245,12 @@ class SecureBackup:
             if os.path.exists(local_tmp):
                 os.remove(local_tmp)
 
-    # ─── 검증 ────────────────────────────────────────────────
+    # ─── Verify ────────────────────────────────────────────────
 
     def verify(self, password: str | bytes) -> dict:
-        """전체 백업 무결성 검증
+        """Verify integrity of all backups
 
-        각 타겟의 latest 백업을 다운로드하고 복호화 시도.
+        Downloads and attempts to decrypt the latest backup on each target.
         """
         results = {}
         targets = self.config.get_backup_targets()
@@ -264,13 +264,13 @@ class SecureBackup:
                     )
 
                     if not self.transport.get(target, remote_path, local_tmp, timeout=60):
-                        results[target] = {"ok": False, "error": "다운로드 실패"}
+                        results[target] = {"ok": False, "error": "download failed"}
                         continue
 
                     with open(local_tmp, "rb") as f:
                         blob = EncryptedBlob.from_bytes(f.read())
 
-                    # 복호화 시도 (AAD 없이 — 검증 목적)
+                    # attempt decryption (without AAD — for verification)
                     self.engine.decrypt(blob, password)
                     results[target] = {
                         "ok": True,
@@ -280,7 +280,7 @@ class SecureBackup:
 
                     os.remove(local_tmp)
                 else:
-                    # 로컬 테스트 모드
+                    # local test mode
                     local_target = os.path.join(
                         self.config.backup_dir, f"test_{target}"
                     )
@@ -289,7 +289,7 @@ class SecureBackup:
                         reverse=True,
                     )
                     if not vault_files:
-                        results[target] = {"ok": False, "error": "백업 없음"}
+                        results[target] = {"ok": False, "error": "no backup found"}
                         continue
 
                     vault_path = os.path.join(local_target, vault_files[0])
@@ -309,13 +309,13 @@ class SecureBackup:
 
         return results
 
-    # ─── 상태 ────────────────────────────────────────────────
+    # ─── Status ────────────────────────────────────────────────
 
     def status(self) -> dict:
-        """백업 상태 요약"""
+        """Backup status summary"""
         targets = self.config.get_backup_targets()
 
-        # 로컬 백업 파일 목록
+        # local backup file list
         local_vaults = []
         if os.path.isdir(self.config.backup_dir):
             local_vaults = sorted(
@@ -323,7 +323,7 @@ class SecureBackup:
                 reverse=True,
             )
 
-        # 감사 로그 마지막 기록
+        # last audit log entry
         last_backup = None
         if os.path.isfile(self.audit_log_path):
             with open(self.audit_log_path) as f:
@@ -342,16 +342,16 @@ class SecureBackup:
             "config_dir": self.config.config_dir,
         }
 
-    # ─── 내부 ────────────────────────────────────────────────
+    # ─── Internal ────────────────────────────────────────────────
 
     def _write_audit(self, record: BackupRecord):
-        """감사 로그 추가 (append-only)"""
+        """Append to audit log (append-only)"""
         os.makedirs(os.path.dirname(self.audit_log_path), exist_ok=True)
         with open(self.audit_log_path, "a") as f:
             f.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
 
     def _cleanup_old_backups(self):
-        """오래된 로컬 백업 정리"""
+        """Clean up old local backups"""
         max_keep = self.config.config.backup.max_versions
         if not os.path.isdir(self.config.backup_dir):
             return

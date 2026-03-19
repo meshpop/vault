@@ -1,14 +1,14 @@
 """
-SecureVault — 분산 패스워드 관리자 (제품 핵심)
+SecureVault — Distributed password manager (product core)
 
-패스워드/시크릿 CRUD + Shamir share 자동 분산/회수.
-모든 데이터는 AES-256-GCM + Argon2id로 암호화.
-마스터 키는 Shamir's Secret Sharing으로 N개 노드에 분산.
+Password/secret CRUD + Shamir share distribution/collection.
+All data encrypted with AES-256-GCM + Argon2id.
+Master key distributed across N nodes via Shamir's Secret Sharing.
 
-원칙:
-- 룰 기반만. AI가 보안 결정 안 함
-- 패스워드 위치는 사람이 정함
-- vssh 전송, transport-agnostic
+Principles:
+- Rule-based only. AI does not make security decisions.
+- Password locations are decided by humans.
+- vssh transport, transport-agnostic.
 """
 
 import os
@@ -24,18 +24,18 @@ from engine import VaultEngine, EncryptedBlob
 from keymanager import ShamirSecret, KeyManager
 
 
-# ─── 데이터 모델 ──────────────────────────────────────────
+# ─── Data models ──────────────────────────────────────────
 
 @dataclass
 class SecretEntry:
-    """개별 시크릿 엔트리"""
-    name: str                   # 식별자 (예: "db_master", "api_key")
-    value: str                  # 실제 비밀값
-    category: str = "default"   # 분류 (password, api_key, token, cert, etc.)
+    """Individual secret entry"""
+    name: str                   # identifier (e.g. "db_master", "api_key")
+    value: str                  # actual secret value
+    category: str = "default"   # category (password, api_key, token, cert, etc.)
     tags: list = field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
-    created_by: str = "human"   # 항상 human. AI가 비밀을 만들지 않음
+    created_by: str = "human"   # always human. AI does not create secrets
     note: str = ""
 
     def __post_init__(self):
@@ -48,18 +48,18 @@ class SecretEntry:
 
 @dataclass
 class ShareMap:
-    """Shamir share 위치 맵"""
+    """Shamir share location map"""
     share_index: int
     node: str
     remote_path: str
     stored_at: str = ""
     verified: bool = False
-    hash: str = ""  # share 해시 (내용은 저장 안 함)
+    hash: str = ""  # share hash (content not stored)
 
 
 @dataclass
 class VaultMeta:
-    """Vault 메타데이터 — 암호화되지 않는 부분"""
+    """Vault metadata — unencrypted portion"""
     vault_id: str
     version: int = 2
     shamir_n: int = 5
@@ -71,60 +71,60 @@ class VaultMeta:
     backup_targets: list = field(default_factory=lambda: ["s1", "s2"])
 
 
-# ─── Vault 코어 ──────────────────────────────────────────
+# ─── Vault core ──────────────────────────────────────────
 
 class SecureVaultManager:
-    """분산 패스워드 관리자
+    """Distributed password manager
 
-    사용 흐름:
-    1. init() — vault 초기화, 마스터 키 생성
-    2. add(name, value) — 시크릿 추가
-    3. get(name) — 시크릿 조회
-    4. distribute() — Shamir share를 노드에 분산
-    5. collect() — 노드에서 share 회수 → 마스터 키 복원
-    6. lock() — 메모리에서 키 제거
-    7. unlock(password) — 패스워드로 잠금 해제
+    Usage flow:
+    1. init() — initialize vault, generate master key
+    2. add(name, value) — add secret
+    3. get(name) — retrieve secret
+    4. distribute() — distribute Shamir shares to nodes
+    5. collect() — collect shares from nodes → recover master key
+    6. lock() — remove key from memory
+    7. unlock(password) — unlock with password
 
-    마스터 키는 두 가지 방법으로 보호:
-    a) 패스워드 기반: AES-256-GCM + Argon2id
-    b) Shamir 분산: N개 노드에 share 저장, K개만 있으면 복원
+    Master key is protected in two ways:
+    a) Password-based: AES-256-GCM + Argon2id
+    b) Shamir distributed: shares stored on N nodes, K shares needed to recover
     """
 
     def __init__(self, vault_dir: str, transport=None):
         """
         Args:
-            vault_dir: vault 데이터 디렉토리
-            transport: VsshTransport 인스턴스 (None이면 로컬 전용)
+            vault_dir: vault data directory
+            transport: VsshTransport instance (None = local only)
         """
         self.vault_dir = vault_dir
         self.transport = transport
         self.engine = VaultEngine()
         self.shamir = ShamirSecret()
 
-        # 파일 경로
+        # file paths
         self._meta_path = os.path.join(vault_dir, "vault.meta.json")
-        self._data_path = os.path.join(vault_dir, "vault.data")  # 암호화된 시크릿
-        self._key_enc_path = os.path.join(vault_dir, "vault.key.enc")  # 패스워드 암호화 마스터키
+        self._data_path = os.path.join(vault_dir, "vault.data")  # encrypted secrets
+        self._key_enc_path = os.path.join(vault_dir, "vault.key.enc")  # password-encrypted master key
 
-        # 상태
-        self._master_key: Optional[bytes] = None  # 잠금 해제 시에만 존재
-        self._secrets: Dict[str, SecretEntry] = {}  # 잠금 해제 시에만 존재
+        # state
+        self._master_key: Optional[bytes] = None  # exists only when unlocked
+        self._secrets: Dict[str, SecretEntry] = {}  # exists only when unlocked
         self._meta: Optional[VaultMeta] = None
         self._audit_log: list = []
 
-        # 메타 로드
+        # load meta
         if os.path.exists(self._meta_path):
             self._load_meta()
 
-    # ─── 초기화 ────────────────────────────────────────────
+    # ─── Initialization ────────────────────────────────────────────
 
     def init(self, password: str, shamir_n: int = 5, shamir_k: int = 3) -> dict:
-        """새 vault 초기화
+        """Initialize new vault
 
         Args:
-            password: 마스터 패스워드 (Argon2id로 키 유도)
-            shamir_n: 총 share 수
-            shamir_k: 복원 임계값
+            password: master password (key derived via Argon2id)
+            shamir_n: total share count
+            shamir_k: recovery threshold
 
         Returns:
             {"vault_id": ..., "master_key_hash": ..., "shares": [...]}
@@ -134,23 +134,23 @@ class SecureVaultManager:
         if os.path.exists(self._meta_path):
             raise FileExistsError(f"Vault already exists: {self.vault_dir}")
 
-        # 1. 마스터 키 생성
+        # 1. generate master key
         self._master_key = os.urandom(32)
         key_hash = hashlib.sha256(self._master_key).hexdigest()[:16]
 
-        # 2. 패스워드로 마스터 키 암호화 저장
+        # 2. encrypt and save master key with password
         blob = self.engine.encrypt(self._master_key, password, context="master-key")
         with open(self._key_enc_path, "wb") as f:
             f.write(blob.to_bytes())
 
-        # 3. Shamir 분할
+        # 3. Shamir split
         shares = self.shamir.split(self._master_key, n=shamir_n, k=shamir_k)
 
-        # 4. 빈 시크릿 저장
+        # 4. save empty secrets
         self._secrets = {}
         self._save_data()
 
-        # 5. 메타 생성
+        # 5. generate meta
         vault_id = hashlib.sha256(
             self._master_key + str(time.time()).encode()
         ).hexdigest()[:12]
@@ -173,10 +173,10 @@ class SecureVaultManager:
             "shamir": f"{shamir_k}-of-{shamir_n}",
         }
 
-    # ─── 잠금/해제 ─────────────────────────────────────────
+    # ─── Lock/unlock ─────────────────────────────────────────
 
     def unlock(self, password: str) -> bool:
-        """패스워드로 vault 잠금 해제"""
+        """Unlock vault with password"""
         if not os.path.exists(self._key_enc_path):
             raise FileNotFoundError("Vault not initialized")
 
@@ -194,11 +194,11 @@ class SecureVaultManager:
             return False
 
     def unlock_shamir(self, shares: List[Tuple[int, bytes]]) -> bool:
-        """Shamir share로 vault 잠금 해제 (패스워드 없이)"""
+        """Unlock vault with Shamir shares (without password)"""
         try:
             self._master_key = self.shamir.recover(shares)
             self._load_data()
-            # 마스터 키 검증 — 데이터 복호화 성공 여부로
+            # validate master key — by success of data decryption
             self._audit("unlock", f"shamir ({len(shares)} shares)")
             return True
         except Exception:
@@ -207,7 +207,7 @@ class SecureVaultManager:
             return False
 
     def lock(self):
-        """vault 잠금 — 메모리에서 키/시크릿 제거"""
+        """Lock vault — remove key/secrets from memory"""
         self._master_key = None
         self._secrets = {}
         self._audit("lock", "memory cleared")
@@ -220,7 +220,7 @@ class SecureVaultManager:
 
     def add(self, name: str, value: str, category: str = "default",
             tags: list = None, note: str = "") -> SecretEntry:
-        """시크릿 추가"""
+        """Add secret"""
         self._require_unlocked()
 
         if name in self._secrets:
@@ -240,7 +240,7 @@ class SecureVaultManager:
         return entry
 
     def get(self, name: str) -> Optional[SecretEntry]:
-        """시크릿 조회"""
+        """Get secret"""
         self._require_unlocked()
         entry = self._secrets.get(name)
         if entry:
@@ -249,7 +249,7 @@ class SecureVaultManager:
 
     def update(self, name: str, value: str = None, category: str = None,
                tags: list = None, note: str = None) -> SecretEntry:
-        """시크릿 수정"""
+        """Update secret"""
         self._require_unlocked()
 
         if name not in self._secrets:
@@ -272,7 +272,7 @@ class SecureVaultManager:
         return entry
 
     def delete(self, name: str) -> bool:
-        """시크릿 삭제"""
+        """Delete secret"""
         self._require_unlocked()
 
         if name not in self._secrets:
@@ -285,7 +285,7 @@ class SecureVaultManager:
         return True
 
     def list_secrets(self, category: str = None) -> List[dict]:
-        """시크릿 목록 (값 제외)"""
+        """List secrets (values excluded)"""
         self._require_unlocked()
         result = []
         for name, entry in self._secrets.items():
@@ -303,7 +303,7 @@ class SecureVaultManager:
         return result
 
     def search(self, query: str) -> List[dict]:
-        """이름/태그/노트로 검색 (값 제외)"""
+        """Search by name/tag/note (values excluded)"""
         self._require_unlocked()
         query_lower = query.lower()
         result = []
@@ -319,14 +319,14 @@ class SecureVaultManager:
         self._audit("search", query)
         return result
 
-    # ─── Shamir 분산/회수 ──────────────────────────────────
+    # ─── Shamir distribute/collect ──────────────────────────────────
 
     def distribute(self, nodes: List[str], remote_dir: str = "/opt/sv-vault/shares") -> dict:
-        """Shamir share를 노드에 분산 저장
+        """Distribute Shamir shares to nodes
 
         Args:
-            nodes: 대상 노드 목록 (len >= shamir_n)
-            remote_dir: 원격 저장 디렉토리
+            nodes: target node list (len >= shamir_n)
+            remote_dir: remote storage directory
 
         Returns:
             {"distributed": [...], "failed": [...]}
@@ -345,10 +345,10 @@ class SecureVaultManager:
         if len(nodes) < n:
             raise ValueError(f"Need at least {n} nodes, got {len(nodes)}")
 
-        # 1. Shamir 분할
+        # 1. Shamir split
         shares = self.shamir.split(self._master_key, n=n, k=k)
 
-        # 2. 각 노드에 전송
+        # 2. send to each node
         distributed = []
         failed = []
         share_map = []
@@ -357,7 +357,7 @@ class SecureVaultManager:
             node = nodes[i]
             remote_path = f"{remote_dir}/share_{self._meta.vault_id}_{idx}.bin"
 
-            # 임시 파일로 저장 후 전송
+            # save to temp file then transfer
             tmp_path = os.path.join(self.vault_dir, f".tmp_share_{idx}.bin")
             try:
                 with open(tmp_path, "wb") as f:
@@ -393,7 +393,7 @@ class SecureVaultManager:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
 
-        # 3. share 맵 저장
+        # 3. save share map
         self._meta.share_map = share_map
         self._save_meta()
 
@@ -407,14 +407,14 @@ class SecureVaultManager:
         }
 
     def collect(self, nodes: List[str] = None, count: int = None) -> List[Tuple[int, bytes]]:
-        """노드에서 Shamir share 회수
+        """Collect Shamir shares from nodes
 
         Args:
-            nodes: 회수 대상 노드 (None이면 share_map에서 자동)
-            count: 회수할 share 수 (None이면 k개)
+            nodes: collection target nodes (None = auto from share_map)
+            count: number of shares to collect (None = k)
 
         Returns:
-            [(index, share_bytes), ...] — Shamir 복원용
+            [(index, share_bytes), ...] — for Shamir recovery
         """
         if not self.transport:
             raise RuntimeError("Transport not configured")
@@ -425,7 +425,7 @@ class SecureVaultManager:
         k = self._meta.shamir_k
         target_count = count or k
 
-        # share_map에서 타겟 선정
+        # select targets from share_map
         targets = []
         for sm_dict in self._meta.share_map:
             sm = ShareMap(**sm_dict) if isinstance(sm_dict, dict) else sm_dict
@@ -441,7 +441,7 @@ class SecureVaultManager:
                 f"Not enough reachable shares. Need {k}, found {len(targets)}"
             )
 
-        # 회수
+        # collect
         collected = []
         for sm in targets:
             local_path = os.path.join(self.vault_dir, f".tmp_recv_{sm.share_index}.bin")
@@ -453,7 +453,7 @@ class SecureVaultManager:
                     with open(local_path, "rb") as f:
                         share_bytes = f.read()
 
-                    # 해시 검증
+                    # verify hash
                     received_hash = hashlib.sha256(share_bytes).hexdigest()[:16]
                     if sm.hash and received_hash != sm.hash:
                         self._audit("collect_fail", f"hash mismatch on {sm.node}")
@@ -468,53 +468,53 @@ class SecureVaultManager:
         return collected
 
     def redistribute(self, dead_nodes: List[str], new_nodes: List[str]) -> dict:
-        """장애 노드의 share를 새 노드에 재분배
+        """Redistribute shares from dead nodes to new nodes
 
-        마스터 키가 필요 (unlock 상태).
-        기존 share 전부 폐기하고 새로 분할.
+        Requires master key (must be unlocked).
+        Discards all existing shares and re-splits.
 
         Args:
-            dead_nodes: 장애 노드
-            new_nodes: 전체 새 노드 목록 (len >= shamir_n)
+            dead_nodes: failed nodes
+            new_nodes: complete new node list (len >= shamir_n)
         """
         self._require_unlocked()
 
         self._audit("redistribute", f"dead={dead_nodes}, new_targets={new_nodes}")
 
-        # 새로 분산 — 키가 이미 있으니까 distribute() 호출
+        # re-distribute — key is already present, just call distribute()
         return self.distribute(new_nodes)
 
     def rekey(self, new_password: str) -> dict:
-        """마스터 키 교체 (re-key)
+        """Replace master key (re-key)
 
-        기존 시크릿은 보존. 마스터 키만 새로 생성.
-        - 새 패스워드로 마스터 키 암호화
-        - 데이터 재암호화
-        - 새 Shamir share 생성 (기존 share 무효화)
+        Existing secrets are preserved. Only master key is regenerated.
+        - Encrypt master key with new password
+        - Re-encrypt data
+        - Generate new Shamir shares (existing shares invalidated)
 
         Returns:
             {"new_key_hash": ..., "shares": [...]}
         """
         self._require_unlocked()
 
-        # 1. 새 마스터 키
+        # 1. new master key
         new_key = os.urandom(32)
 
-        # 2. 새 패스워드로 마스터 키 암호화
+        # 2. encrypt master key with new password
         blob = self.engine.encrypt(new_key, new_password, context="master-key")
         with open(self._key_enc_path, "wb") as f:
             f.write(blob.to_bytes())
 
-        # 3. 새 키로 데이터 재암호화
+        # 3. re-encrypt data with new key
         self._master_key = new_key
         self._save_data()
 
-        # 4. 새 Shamir share
+        # 4. new Shamir shares
         n = self._meta.shamir_n
         k = self._meta.shamir_k
         shares = self.shamir.split(new_key, n=n, k=k)
 
-        # 5. share 맵 무효화
+        # 5. invalidate share map
         self._meta.share_map = []
         self._update_meta()
 
@@ -524,13 +524,13 @@ class SecureVaultManager:
             "new_key_hash": hashlib.sha256(new_key).hexdigest()[:16],
             "shares": shares,
             "shamir": f"{k}-of-{n}",
-            "warning": "기존 share 무효화됨. distribute() 필요.",
+            "warning": "Existing shares invalidated. Run distribute().",
         }
 
-    # ─── 상태/정보 ─────────────────────────────────────────
+    # ─── Status/info ─────────────────────────────────────────
 
     def status(self) -> dict:
-        """vault 상태"""
+        """Vault status"""
         meta = self._meta
         if not meta:
             return {"initialized": False}
@@ -552,7 +552,7 @@ class SecureVaultManager:
         }
 
     def export_encrypted(self, password: str) -> bytes:
-        """전체 vault를 패스워드 암호화 내보내기 (이관/백업용)"""
+        """Export entire vault encrypted with password (for migration/backup)"""
         self._require_unlocked()
 
         payload = json.dumps({
@@ -564,7 +564,7 @@ class SecureVaultManager:
         return blob.to_bytes()
 
     def import_encrypted(self, data: bytes, password: str, merge: bool = False) -> int:
-        """암호화된 vault 가져오기"""
+        """Import encrypted vault"""
         self._require_unlocked()
 
         blob = EncryptedBlob.from_bytes(data)
@@ -583,14 +583,14 @@ class SecureVaultManager:
         self._audit("import", f"{count} entries (merge={merge})")
         return count
 
-    # ─── 내부 ──────────────────────────────────────────────
+    # ─── Internal ──────────────────────────────────────────────
 
     def _require_unlocked(self):
         if not self.is_unlocked:
             raise PermissionError("Vault is locked. Call unlock() or unlock_shamir() first.")
 
     def _save_data(self):
-        """시크릿을 마스터 키로 암호화 저장"""
+        """Encrypt and save secrets with master key"""
         payload = json.dumps({
             name: asdict(entry) for name, entry in self._secrets.items()
         }, ensure_ascii=False).encode()
@@ -600,7 +600,7 @@ class SecureVaultManager:
             f.write(blob.to_bytes())
 
     def _load_data(self):
-        """암호화된 시크릿 로드"""
+        """Load encrypted secrets"""
         if not os.path.exists(self._data_path):
             self._secrets = {}
             return
@@ -631,7 +631,7 @@ class SecureVaultManager:
             self._save_meta()
 
     def _audit(self, action: str, detail: str = ""):
-        """감사 이벤트 기록"""
+        """Record audit event"""
         event = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "action": action,
@@ -640,16 +640,16 @@ class SecureVaultManager:
         }
         self._audit_log.append(event)
 
-        # append-only JSONL 파일
+        # append-only JSONL file
         audit_path = os.path.join(self.vault_dir, "audit.jsonl")
         try:
             with open(audit_path, "a") as f:
                 f.write(json.dumps(event, ensure_ascii=False) + "\n")
         except Exception:
-            pass  # 감사 로그 실패가 vault 동작을 막으면 안 됨
+            pass  # audit log failure must not block vault operation
 
     def get_audit_log(self, last_n: int = 50) -> list:
-        """감사 로그 조회"""
+        """Retrieve audit log"""
         audit_path = os.path.join(self.vault_dir, "audit.jsonl")
         if not os.path.exists(audit_path):
             return []

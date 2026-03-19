@@ -1,10 +1,10 @@
 """
 SecureVault Encryption Engine (sv-vault)
-AES-256-GCM + Argon2id — 현대적 인증 암호화
+AES-256-GCM + Argon2id — modern authenticated encryption
 
-CBC/PBKDF2 사용하지 않음.
-- GCM: 무결성 검증 포함 (인증 암호화)
-- Argon2id: GPU 브루트포스 저항 (메모리 하드 KDF)
+CBC/PBKDF2 not used.
+- GCM: integrity verification included (authenticated encryption)
+- Argon2id: GPU brute-force resistant (memory-hard KDF)
 """
 
 import os
@@ -18,14 +18,14 @@ from typing import Optional
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from argon2.low_level import hash_secret_raw, Type
 
-# ─── 상수 ────────────────────────────────────────────────────
-VAULT_MAGIC = b"SV01"  # SecureVault v1 파일 매직
+# ─── Constants ────────────────────────────────────────────────────
+VAULT_MAGIC = b"SV01"  # SecureVault v1 file magic
 KEY_SIZE = 32           # AES-256 = 32 bytes
-NONCE_SIZE = 12         # GCM 표준 nonce = 12 bytes
+NONCE_SIZE = 12         # GCM standard nonce = 12 bytes
 SALT_SIZE = 32          # Argon2 salt
-TAG_SIZE = 16           # GCM auth tag (자동 포함)
+TAG_SIZE = 16           # GCM auth tag (included automatically)
 
-# Argon2id 파라미터 — OWASP 권장 기준
+# Argon2id parameters — OWASP recommended baseline
 ARGON2_TIME_COST = 3        # iterations
 ARGON2_MEMORY_COST = 65536  # 64 MB
 ARGON2_PARALLELISM = 4      # threads
@@ -33,21 +33,21 @@ ARGON2_PARALLELISM = 4      # threads
 
 @dataclass
 class EncryptedBlob:
-    """암호화된 데이터 컨테이너"""
+    """Encrypted data container"""
     magic: bytes        # SV01
     version: int        # 1
     salt: bytes         # Argon2 salt (32 bytes)
     nonce: bytes        # GCM nonce (12 bytes)
-    ciphertext: bytes   # 암호화된 데이터 + GCM tag
+    ciphertext: bytes   # encrypted data + GCM tag
     created_at: str     # ISO 8601 timestamp
-    context: str        # 암호화 컨텍스트 (예: "backup", "secret", "memo")
+    context: str        # encryption context (e.g. "backup", "secret", "memo")
 
     def to_bytes(self) -> bytes:
-        """직렬화: 파일 저장용 바이너리 포맷"""
+        """Serialize to binary format for file storage"""
         ctx_bytes = self.context.encode("utf-8")
         ts_bytes = self.created_at.encode("utf-8")
 
-        # 포맷: MAGIC(4) + VERSION(1) + SALT(32) + NONCE(12)
+        # Format: MAGIC(4) + VERSION(1) + SALT(32) + NONCE(12)
         #        + CTX_LEN(2) + CTX + TS_LEN(2) + TS
         #        + CIPHER_LEN(4) + CIPHERTEXT
         buf = bytearray()
@@ -65,16 +65,16 @@ class EncryptedBlob:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "EncryptedBlob":
-        """역직렬화: 바이너리 → EncryptedBlob"""
+        """Deserialize: binary → EncryptedBlob"""
         pos = 0
 
         magic = data[pos:pos + 4]; pos += 4
         if magic != VAULT_MAGIC:
-            raise ValueError(f"잘못된 Vault 파일 (magic={magic!r})")
+            raise ValueError(f"Invalid Vault file (magic={magic!r})")
 
         version = struct.unpack("B", data[pos:pos + 1])[0]; pos += 1
         if version != 1:
-            raise ValueError(f"지원하지 않는 버전: {version}")
+            raise ValueError(f"Unsupported version: {version}")
 
         salt = data[pos:pos + SALT_SIZE]; pos += SALT_SIZE
         nonce = data[pos:pos + NONCE_SIZE]; pos += NONCE_SIZE
@@ -96,7 +96,7 @@ class EncryptedBlob:
         )
 
     def to_dict(self) -> dict:
-        """JSON 직렬화용"""
+        """For JSON serialization"""
         import base64
         return {
             "version": self.version,
@@ -109,10 +109,10 @@ class EncryptedBlob:
 
 
 class VaultEngine:
-    """SecureVault 핵심 암호화 엔진
+    """SecureVault core encryption engine
 
-    모든 암호화/복호화는 이 클래스를 통해서만 수행.
-    CBC/PBKDF2 사용하지 않음 — GCM + Argon2id만 사용.
+    All encryption/decryption is performed through this class only.
+    CBC/PBKDF2 not used — GCM + Argon2id only.
     """
 
     def __init__(
@@ -128,14 +128,14 @@ class VaultEngine:
     # ─── KDF ─────────────────────────────────────────────────
 
     def derive_key(self, password: str | bytes, salt: bytes) -> bytes:
-        """Argon2id로 패스워드에서 AES-256 키 파생
+        """Derive AES-256 key from password using Argon2id
 
         Args:
-            password: 마스터 패스워드 또는 키 바이트
-            salt: 32바이트 랜덤 salt
+            password: master password or key bytes
+            salt: 32-byte random salt
 
         Returns:
-            32바이트 AES-256 키
+            32-byte AES-256 key
         """
         if isinstance(password, str):
             password = password.encode("utf-8")
@@ -147,10 +147,10 @@ class VaultEngine:
             memory_cost=self.argon2_memory_cost,
             parallelism=self.argon2_parallelism,
             hash_len=KEY_SIZE,
-            type=Type.ID,  # Argon2id — side-channel + GPU 저항
+            type=Type.ID,  # Argon2id — side-channel + GPU resistant
         )
 
-    # ─── 암호화 ──────────────────────────────────────────────
+    # ─── Encryption ──────────────────────────────────────────────
 
     def encrypt(
         self,
@@ -159,13 +159,13 @@ class VaultEngine:
         context: str = "default",
         aad: Optional[bytes] = None,
     ) -> EncryptedBlob:
-        """데이터를 AES-256-GCM으로 암호화
+        """Encrypt data with AES-256-GCM
 
         Args:
-            data: 평문 데이터
-            password: 패스워드 (Argon2id로 키 파생)
-            context: 암호화 컨텍스트 (메타데이터)
-            aad: Additional Authenticated Data (선택)
+            data: plaintext data
+            password: password (key derived via Argon2id)
+            context: encryption context (metadata)
+            aad: Additional Authenticated Data (optional)
 
         Returns:
             EncryptedBlob
@@ -193,18 +193,18 @@ class VaultEngine:
         password: str | bytes,
         aad: Optional[bytes] = None,
     ) -> bytes:
-        """EncryptedBlob을 복호화
+        """Decrypt an EncryptedBlob
 
         Args:
-            blob: 암호화된 데이터
-            password: 패스워드
-            aad: 암호화 시 사용한 AAD (동일해야 함)
+            blob: encrypted data
+            password: password
+            aad: AAD used during encryption (must match)
 
         Returns:
-            복호화된 평문
+            decrypted plaintext
 
         Raises:
-            InvalidTag: 패스워드 틀리거나 데이터 변조됨
+            InvalidTag: wrong password or data tampered
         """
         key = self.derive_key(password, blob.salt)
         aesgcm = AESGCM(key)
@@ -213,10 +213,10 @@ class VaultEngine:
         except Exception as tag_err:
             # InvalidTag has empty str() — raise with explicit message
             if not str(tag_err).strip():
-                raise ValueError("패스워드가 틀리거나 파일이 손상됨 (인증 태그 불일치)") from tag_err
+                raise ValueError("Wrong password or corrupted file (GCM auth tag mismatch)") from tag_err
             raise
 
-    # ─── 키 직접 사용 (Shamir 복구 후) ───────────────────────
+    # ─── Direct key use (after Shamir recovery) ───────────────────────
 
     def encrypt_with_key(
         self,
@@ -225,9 +225,9 @@ class VaultEngine:
         context: str = "default",
         aad: Optional[bytes] = None,
     ) -> EncryptedBlob:
-        """이미 파생된 키로 직접 암호화 (Shamir 복구 키 등)"""
+        """Encrypt directly with a pre-derived key (e.g. Shamir recovered key)"""
         if len(key) != KEY_SIZE:
-            raise ValueError(f"키 길이 오류: {len(key)} (필요: {KEY_SIZE})")
+            raise ValueError(f"Key length error: {len(key)} (required: {KEY_SIZE})")
 
         nonce = os.urandom(NONCE_SIZE)
         aesgcm = AESGCM(key)
@@ -236,7 +236,7 @@ class VaultEngine:
         return EncryptedBlob(
             magic=VAULT_MAGIC,
             version=1,
-            salt=b"\x00" * SALT_SIZE,  # KDF 안 씀 — salt 비움
+            salt=b"\x00" * SALT_SIZE,  # no KDF — empty salt
             nonce=nonce,
             ciphertext=ciphertext,
             created_at=datetime.now(timezone.utc).isoformat(),
@@ -249,14 +249,14 @@ class VaultEngine:
         key: bytes,
         aad: Optional[bytes] = None,
     ) -> bytes:
-        """이미 파생된 키로 직접 복호화"""
+        """Decrypt directly with a pre-derived key"""
         if len(key) != KEY_SIZE:
-            raise ValueError(f"키 길이 오류: {len(key)} (필요: {KEY_SIZE})")
+            raise ValueError(f"Key length error: {len(key)} (required: {KEY_SIZE})")
 
         aesgcm = AESGCM(key)
         return aesgcm.decrypt(blob.nonce, blob.ciphertext, aad)
 
-    # ─── 파일 I/O ────────────────────────────────────────────
+    # ─── File I/O ────────────────────────────────────────────
 
     def encrypt_file(
         self,
@@ -265,11 +265,11 @@ class VaultEngine:
         password: str | bytes,
         context: str = "file",
     ) -> EncryptedBlob:
-        """파일을 암호화하여 .vault 파일로 저장"""
+        """Encrypt a file and save as .vault file"""
         with open(src_path, "rb") as f:
             data = f.read()
 
-        # AAD에 원본 파일명 해시 포함 (무결성)
+        # Include original filename hash in AAD (integrity)
         aad = hashlib.sha256(os.path.basename(src_path).encode()).digest()
         blob = self.encrypt(data, password, context=context, aad=aad)
 
@@ -285,7 +285,7 @@ class VaultEngine:
         password: str | bytes,
         original_filename: Optional[str] = None,
     ) -> bytes:
-        """암호화된 .vault 파일을 복호화"""
+        """Decrypt an encrypted .vault file"""
         with open(src_path, "rb") as f:
             blob = EncryptedBlob.from_bytes(f.read())
 
@@ -300,20 +300,20 @@ class VaultEngine:
 
         return plaintext
 
-    # ─── 유틸리티 ────────────────────────────────────────────
+    # ─── Utilities ────────────────────────────────────────────
 
     @staticmethod
     def generate_key() -> bytes:
-        """랜덤 AES-256 키 생성"""
+        """Generate a random AES-256 key"""
         return os.urandom(KEY_SIZE)
 
     @staticmethod
     def generate_salt() -> bytes:
-        """랜덤 salt 생성"""
+        """Generate a random salt"""
         return os.urandom(SALT_SIZE)
 
     def info(self) -> dict:
-        """현재 엔진 설정 정보"""
+        """Current engine configuration info"""
         return {
             "cipher": "AES-256-GCM",
             "kdf": "Argon2id",
